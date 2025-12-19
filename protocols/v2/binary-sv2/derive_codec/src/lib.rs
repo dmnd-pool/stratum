@@ -56,6 +56,9 @@ use alloc::{
 use core::iter::FromIterator;
 use proc_macro::{Group, TokenStream, TokenTree};
 
+/// Reserved field names to avoid conflicts
+const RESERVED_FIELDS: [&str; 2] = ["__decodable_internal_data", "__decodable_internal_offset"];
+
 // Checks if a `TokenStream` contains a group with a bracket delimiter (`[]`),
 // and further examines if the group has an identifier called `already_sized`.
 //
@@ -557,23 +560,43 @@ fn parse_struct_fields(group: Vec<TokenTree>) -> Vec<ParsedField> {
 pub fn decodable(item: TokenStream) -> TokenStream {
     let parsed_struct = get_struct_properties(item);
 
+    let data_ident = RESERVED_FIELDS[0];
+    let offset_ident = RESERVED_FIELDS[1];
+
+    for field in &parsed_struct.fields {
+        if RESERVED_FIELDS.contains(&field.name.as_str()) {
+            return format!(
+                "compile_error!(\"Field name '{}' is reserved and cannot be used in struct '{}'. Rename it to avoid conflicts.\");",
+                field.name, parsed_struct.name
+            )
+            .parse()
+            .unwrap();
+        }
+    }
+
     let mut derive_fields = String::new();
 
     for f in parsed_struct.fields.clone() {
         let field = format!(
             "
-            let {}: Vec<FieldMarker> = {}{}::get_structure(& data[offset..])?;
-            offset += {}.size_hint_(&data, offset)?;
-            let {} =  {}.try_into()?;
-            fields.push({});
+            if {offset} > {data}.len() {{
+                return Err(Error::OutOfBound);
+            }}
+
+            let {name}: Vec<FieldMarker> = {ty}{generics}::get_structure(& {data}[{offset}..])?;
+
+            let __size = {name}.size_hint_(&{data}, {offset})?;
+            {offset} = ({offset}.checked_add(__size)
+                .ok_or(Error::OutOfBound)?) ;
+
+            let {name} = {name}.try_into()?;
+            fields.push({name});
             ",
-            f.name,
-            f.type_,
-            f.get_generics(),
-            f.name,
-            f.name,
-            f.name,
-            f.name
+            name = f.name,
+            ty = f.type_,
+            generics = f.get_generics(),
+            data = data_ident,
+            offset = offset_ident
         );
         derive_fields.push_str(&field)
     }
@@ -602,11 +625,12 @@ pub fn decodable(item: TokenStream) -> TokenStream {
     for f in fields.clone() {
         let field = format!(
             "
-            {}: {}{}::from_decoded_fields(data.pop().ok_or(Error::NoDecodableFieldPassed)?.into())?,
+            {}: {}{}::from_decoded_fields({}.pop().ok_or(Error::NoDecodableFieldPassed)?.into())?,
             ",
             f.name,
             f.type_,
-            f.get_generics()
+            f.get_generics(),
+            data_ident
         );
         derive_decoded_fields.push_str(&field)
     }
@@ -624,14 +648,14 @@ pub fn decodable(item: TokenStream) -> TokenStream {
     use super::*;
 
     impl{} Decodable<'decoder> for {}{} {{
-        fn get_structure(data: &[u8]) -> Result<Vec<FieldMarker>, Error> {{
+        fn get_structure({}: &[u8]) -> Result<Vec<FieldMarker>, Error> {{
             let mut fields = Vec::new();
-            let mut offset = 0;
+            let mut {} = 0;
             {}
             Ok(fields)
         }}
 
-        fn from_decoded_fields(mut data: Vec<DecodableField<'decoder>>) -> Result<Self, Error> {{
+        fn from_decoded_fields(mut {}: Vec<DecodableField<'decoder>>) -> Result<Self, Error> {{
             Ok(Self {{
                 {}
             }})
@@ -659,7 +683,10 @@ pub fn decodable(item: TokenStream) -> TokenStream {
         impl_generics,
         parsed_struct.name,
         parsed_struct.generics,
+        data_ident,
+        offset_ident,
         derive_fields,
+        data_ident,
         derive_decoded_fields,
         // impl into_static
         impl_generics,
