@@ -345,7 +345,10 @@ impl ChannelFactory {
         additional_coinbase_script_data: Option<&[u8]>,
     ) -> Result<(Vec<Mining<'static>>, Option<u32>), Error> {
         let extended_channels_group = 0;
-        let max_extranonce_size = self.extranonces.get_range2_len() as u16;
+        let max_extranonce_size = self.extranonces.get_len() as u16
+            + additional_coinbase_script_data
+                .map(|bs| bs.len())
+                .unwrap_or(0) as u16;
         if min_extranonce_size <= max_extranonce_size {
             // SECURITY is very unlikely to finish the ids btw this unwrap could be used by an
             // attacker that want to disrupt the service maybe we should have a method
@@ -368,9 +371,10 @@ impl ChannelFactory {
                     return Err(e);
                 }
             };
+            // Using max_extranonce_size here, will overflow since it includes additional coinbase script data
             let extranonce = self
                 .extranonces
-                .next_extended(max_extranonce_size as usize)
+                .next_extended(self.extranonces.get_range2_len())
                 .unwrap();
             let extranonce_with_stripped_data = extranonce
                 .into_prefix(self.extranonces.get_prefix_len(), &[])
