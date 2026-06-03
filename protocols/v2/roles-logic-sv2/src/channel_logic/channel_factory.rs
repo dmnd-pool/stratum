@@ -1882,6 +1882,22 @@ pub struct ProxyExtendedChannelFactory {
     extended_channel_id: u32,
 }
 
+/// Decode the network target encoded in `nbits` (Bitcoin's compact
+/// representation) into a `mining_sv2::Target`. Used by the non-JD proxy
+/// branch so we can detect block-finding shares without a connected
+/// Template Provider.
+fn nbits_to_target(nbits: u32) -> Target {
+    use stratum_common::bitcoin::Target as BtcTarget;
+    let mut bytes = BtcTarget::from_compact(CompactTarget::from_consensus(nbits))
+        .to_be_bytes()
+        .to_vec();
+    bytes.reverse(); // BE -> LE for mining_sv2 wire format
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .expect("Target::to_be_bytes always returns 32 bytes");
+    arr.into()
+}
+
 impl ProxyExtendedChannelFactory {
     /// Constructor
     #[allow(clippy::too_many_arguments)]
@@ -2136,9 +2152,6 @@ impl ProxyExtendedChannelFactory {
                 None,
             )
         } else {
-            let bitcoin_target = [0; 32];
-            // if there is not job_creator is not proxy duty to check if target is below or above
-            // bitcoin target so we set bitcoin_target = 0.
             let prev_blockhash = self
                 .inner
                 .last_prev_hash_
@@ -2150,9 +2163,13 @@ impl ProxyExtendedChannelFactory {
                 .ok_or(Error::ShareDoNotMatchAnyJob)?
                 .0
                 .nbits;
+            // Use the network target encoded in nbits (sent by the pool in
+            // SetNewPrevHash) so block-finding shares can be detected by
+            // the proxy even without a connected Template Provider.
+            let bitcoin_target = nbits_to_target(bits);
             self.inner.check_target(
                 Share::Extended(m),
-                bitcoin_target.into(),
+                bitcoin_target,
                 None,
                 self.extended_channel_id,
                 merkle_path,
@@ -2224,7 +2241,6 @@ impl ProxyExtendedChannelFactory {
                         None,
                     )
                 } else {
-                    let bitcoin_target = [0; 32];
                     let prev_blockhash = self
                         .inner
                         .last_prev_hash_
@@ -2236,11 +2252,13 @@ impl ProxyExtendedChannelFactory {
                         .ok_or(Error::ShareDoNotMatchAnyJob)?
                         .0
                         .nbits;
-                    // if there is not job_creator is not proxy duty to check if target is below or
-                    // above bitcoin target so we set bitcoin_target = 0.
+                    // Use the network target encoded in nbits (sent by the pool in
+                    // SetNewPrevHash) so block-finding shares can be detected by
+                    // the proxy even without a connected Template Provider.
+                    let bitcoin_target = nbits_to_target(bits);
                     self.inner.check_target(
                         Share::Standard((m, *g_id)),
-                        bitcoin_target.into(),
+                        bitcoin_target,
                         None,
                         self.extended_channel_id,
                         merkle_path,
@@ -3200,5 +3218,44 @@ mod test {
             Err(Error::InvalidBip34Bytes(bytes)) if bytes == malformed_prefix
         ));
         //panic!();
+    }
+
+    // ---- Tests for nbits_to_target (issue #111) ----
+    // nbits_to_target is the new helper that lets the non-JD proxy branch
+    // detect block-finding shares using the network target encoded in
+    // SetNewPrevHash.nbits. The end-to-end behavior is also exercised in the
+    // dmnd-client bridge tests; here we lock in the helper itself.
+
+    #[test]
+    fn nbits_to_target_zero_yields_zero_target() {
+        // A malformed pool message with nbits=0 must produce a target of zero,
+        // so no hash can ever match -> no false-positive block-finds. This
+        // preserves the prior behavior of the [0;32] hardcode for the
+        // degenerate case.
+        let t = super::nbits_to_target(0);
+        let zero: mining_sv2::Target = [0u8; 32].into();
+        assert_eq!(t, zero);
+    }
+
+    #[test]
+    fn nbits_to_target_matches_existing_test_helper() {
+        // Cross-check the production helper against the long-standing
+        // `nbit_to_target` test fixture above. Same input must yield the same
+        // 32-byte little-endian target.
+        let nbits = PREV_HEADER_NBITS;
+        let from_prod: mining_sv2::Target = super::nbits_to_target(nbits);
+        let from_fixture: mining_sv2::Target = nbit_to_target(nbits).into();
+        assert_eq!(from_prod, from_fixture);
+    }
+
+    #[test]
+    fn nbits_to_target_regtest_max_is_greater_than_mainnet() {
+        // Sanity: regtest difficulty (huge target) must order strictly above
+        // mainnet difficulty (tiny target) under the mining_sv2::Target
+        // ordering. Any block-detection logic that compares hash <= target
+        // depends on this ordering being correct.
+        let regtest = super::nbits_to_target(0x207fffff);
+        let mainnet = super::nbits_to_target(0x1707b15c);
+        assert!(regtest > mainnet);
     }
 }
