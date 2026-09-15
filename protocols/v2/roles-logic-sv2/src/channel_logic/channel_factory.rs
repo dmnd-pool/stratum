@@ -1204,6 +1204,12 @@ impl ChannelFactory {
             },
         }
     }
+    /// Updates the downstream target for the given channel_id
+    fn update_target_for_channel(&mut self, channel_id: u32, new_target: Target) -> Option<bool> {
+        let channel = self.extended_channels.get_mut(&channel_id)?;
+        channel.target = new_target.into();
+        Some(true)
+    }
 }
 
 /// Used by a pool to in order to manage all downstream channel. It adds job creation capabilities
@@ -1761,6 +1767,16 @@ impl PoolChannelFactory {
     /// Update coinbase outputs
     pub fn update_pool_outputs(&mut self, outs: Vec<TxOut>) {
         self.pool_coinbase_outputs = outs;
+    }
+
+    /// Calls [`ChannelFactory::update_target_for_channel`]
+    /// Set a particular downstream channel target.
+    pub fn update_target_for_channel(
+        &mut self,
+        channel_id: u32,
+        new_target: Target,
+    ) -> Option<bool> {
+        self.inner.update_target_for_channel(channel_id, new_target)
     }
 
     /// Set the target for this channel. This is the upstream target.
@@ -2385,6 +2401,15 @@ impl ProxyExtendedChannelFactory {
     /// be the extranonce_prefix len
     pub fn get_upstream_extranonce1_len(&self) -> usize {
         self.inner.extranonces.get_range0_len()
+    }
+
+    /// Calls [`ChannelFactory::update_target_for_channel`]
+    pub fn update_target_for_channel(
+        &mut self,
+        channel_id: u32,
+        new_target: Target,
+    ) -> Option<bool> {
+        self.inner.update_target_for_channel(channel_id, new_target)
     }
 
     pub fn get_extranonce_len(&self) -> usize {
