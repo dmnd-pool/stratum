@@ -51,6 +51,8 @@ pub enum Error {
     UnknownRequestId(u32),
     /// No more extranonces
     NoMoreExtranonces,
+    /// Stable channel coinbase sequences must never wrap or be reused.
+    ChannelCoinbaseSequenceExhausted,
     /// A non future job always expect a previous new prev hash
     JobIsNotFutureButPrevHashNotPresent,
     /// If a channel is neither extended or part of a pool,
@@ -188,6 +190,7 @@ impl Display for Error {
                 )
             },
             ExtranoncePrefixAlreadyInUse => write!(f, "Extranonce prefix already in use"),
+            ChannelCoinbaseSequenceExhausted => write!(f, "Channel coinbase sequence exhausted"),
             NoMoreExtranonces => write!(f, "No more extranonces"),
             JobIsNotFutureButPrevHashNotPresent => write!(f, "A non future job always expect a previous new prev hash"),
             ChannelIsNeitherExtendedNeitherInAPool => write!(f, "If a channel is neither extended neither is part of a pool the only thing to do when a OpenStandardChannel is received is to relay it upstream with and updated request id"),
