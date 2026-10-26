@@ -198,14 +198,14 @@ impl ParseDownstreamMiningMessages<(), NullDownstreamMiningSelector, NoRouting> 
     }
 
     fn handle_set_custom_mining_job(&mut self, m: SetCustomMiningJob) -> Result<SendTo<()>, Error> {
-        let m = SetCustomMiningJobSuccess {
-            channel_id: m.channel_id,
-            request_id: m.request_id,
-            job_id: self
-                .channel_factory
-                .safe_lock(|cf| cf.on_new_set_custom_mining_job(m.into_static()).job_id)
-                .unwrap(),
+        let result = self
+            .channel_factory
+            .safe_lock(|cf| cf.try_on_new_set_custom_mining_job(m.into_static()))
+            .map_err(|error| Error::PoisonLock(error.to_string()))?;
+        let response = match result {
+            Ok(success) => Mining::SetCustomMiningJobSuccess(success),
+            Err(error) => Mining::SetCustomMiningJobError(error),
         };
-        Ok(SendTo::Respond(Mining::SetCustomMiningJobSuccess(m)))
+        Ok(SendTo::Respond(response))
     }
 }

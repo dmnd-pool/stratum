@@ -503,36 +503,41 @@ pub fn from_u128_to_u256(input: u128) -> U256Primitive {
 /// large mining farms.
 #[derive(Debug, Default)]
 pub struct GroupId {
-    group_ids: Id,
-    channel_ids: Id,
+    ids: Id,
 }
 
 impl GroupId {
     /// Creates a new [`GroupId`] instance.
     ///
-    /// New GroupId it starts with groups 0, since 0 is reserved for hom downstream's.
+    /// Groups and channels share one counter; 0 is reserved for HOM groups.
     pub fn new() -> Self {
-        Self {
-            group_ids: Id::new(),
-            channel_ids: Id::new(),
-        }
+        Self { ids: Id::new() }
     }
 
     /// Generates a new unique group ID.
     ///
-    /// Increments the internal group ID counter and returns the next available group ID.
+    /// Increments the shared ID counter and returns the next available group ID.
     pub fn new_group_id(&mut self) -> u32 {
-        self.group_ids.next()
+        self.ids.next()
     }
 
     /// Generates a new unique channel ID for a given group.
     ///
-    /// Increments the internal channel ID counter and returns the next available channel ID.
+    /// Increments the shared ID counter and returns the next available channel ID.
     ///
     /// **Note**: The `_group_id` parameter is reserved for future use to create a hierarchical
     /// structure of IDs without breaking compatibility with older versions.
     pub fn new_channel_id(&mut self, _group_id: u32) -> u32 {
-        self.channel_ids.next()
+        self.ids.next()
+    }
+
+    /// Advances the shared counter past a supplied channel ID.
+    pub(crate) fn reserve_channel_id(&mut self, id: u32) -> Result<(), Error> {
+        if id == 0 {
+            return Err(Error::ChannelIdAlreadyInUse(id));
+        }
+        self.ids.state = max(self.ids.state, id);
+        Ok(())
     }
 
     /// Combines a group ID and channel ID into a single 64-bit unique ID.
@@ -578,7 +583,8 @@ fn test_group_id_new_channel_id() {
     let _ = group_ids.new_group_id();
     let id = group_ids.new_group_id();
     let channel_id = group_ids.new_channel_id(id);
-    assert!(channel_id == 1);
+    assert_eq!(channel_id, 3);
+    assert_eq!(group_ids.new_group_id(), 4);
 }
 #[test]
 fn test_group_id_new_into_complete_id() {
